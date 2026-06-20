@@ -1,0 +1,28 @@
+# Core dependencies
+fastapi==0.115.12
+uvicorn[standard]==0.34.3
+python-multipart==0.0.20
+pydantic==2.11.3
+
+# PDF processing
+pymupdf==1.27.0
+pdfplumber==0.11.10
+
+# Table extraction (optional - requires ghostscript)
+# camelot-py==2.0.0
+
+# OCR
+pytesseract==0.3.13
+Pillow==11.2.1
+
+# Computer Vision
+opencv-python-headless==4.11.0.86
+numpy==2.2.6
+scikit-image==0.25.2
+
+# Gemini LLM verification
+google-genai==1.20.0
+
+# Utilities
+aiofiles==24.1.0
+python-slugify==8.0.4
