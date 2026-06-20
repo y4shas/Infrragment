@@ -1,197 +1,180 @@
-# Infrragment
+# Loan-Package Logical Pagination Splitter
 
-**Organize large PDFs into structured documents and machine-readable tables.**
+A working prototype for **InfrX 2026 — Problem B: Structuring the 2,000-Page File: Tables & Logical Pagination**.
 
-Infrragment takes a single large, unstructured, multi-document PDF (e.g., a 100–2000 page mortgage loan file) and produces:
+It takes one giant, undifferentiated loan-package PDF and recovers the individual
+documents inside it — exact start/end page for each instance, including telling
+apart several documents of the *same type* sitting back to back (e.g. three years
+of Form 1040) — then writes each one out as its own PDF plus a machine-readable
+`manifest.json`. As a secondary feature (the brief also calls out tables), it
+stitches multi-page tables (e.g. a bank statement's transaction history) into a
+single clean CSV per document.
 
-1. **Logical pagination** — splits the PDF into individual document instances with precise page boundaries 
-2. **Table structuring** — extracts tables (including multi-page tables) into clean, structured row/column data
-3. **Dashboard UI** — upload, browse, and inspect results
+## Where this comes from
 
-## Architecture
+The approach is adapted from the "Multi Page Document Classification using
+Machine Learning and NLP" article (Qaisar Tanvir), which frames document
+splitting as a page-level classification problem with three label types —
+**First page**, **Last page**, and **Other (middle page)** of each document
+class — followed by a post-processing pass that walks the predicted labels and
+turns them into page ranges. This project re-implements that same two-stage
+shape (classify → walk → range), but adapted to run with **zero labeled
+training data**, since (like the article's own dataset) real loan files aren't
+something this project has access to:
 
-```
-Upload PDF
-  → Page feature extraction (text, layout, visual)
-  → Deterministic boundary detection (find document breaks)
-  → Document instance resolution (group + disambiguate same-type docs)
-  → Optional: Cheap-LLM verification (Gemini Flash Lite checks boundaries)
-  → Split PDF into per-document-instance files
-  → Table extraction per document instance (handles multi-page tables)
-  → Optional: LLM verification on extracted tables
-  → Persist structured JSON + organize output folders
-  → Serve via API to frontend dashboard
-```
+| Article's component | This project |
+|---|---|
+| OCR → text per page | `pdf_extract.py` (text layer first, Tesseract OCR fallback only for image-only pages) |
+| Doc2Vec text vectorizer | `vectorizer.py` — TF-IDF stand-in, same `fit`/`transform` shape so a real Doc2Vec model drops in later |
+| Logistic Regression classifier over First/Last/Other | `page_classifier.py` — **two interchangeable classifiers**: a zero-data `HeuristicClassifier` (default) and a `TrainableClassifier` that is a direct re-implementation of the article's supervised pipeline for when labeled samples exist |
+| Post-processing range-finding state machine | `boundary_detector.py` — generalized to also close out single-page document classes and back-to-back same-type instances |
 
-### Design: Deterministic-First, LLM-as-Verifier
+## Why a heuristic default instead of training a model first
 
-- Boundary detection and table extraction are done **deterministically/locally** using classical text analysis, layout heuristics, and PDF parsing libraries
-- A **cheap Gemini model** (`gemini-3.1-flash-lite`) is used only as a **verifier** — confirming or flagging the deterministic output — not as the primary extraction engine
-- This keeps cost at **~$0.02-0.03 per 2000-page document** vs. $10+ with per-page LLM extraction
-- LLM verification is **fully optional** — the system works without a Gemini API key
+The article had 300+ labeled samples per document class to train Doc2Vec +
+Logistic Regression. A hackathon prototype doesn't have that, and won't have it
+for a brand-new customer's document set on day one either. So the default path
+(`HeuristicClassifier`) needs no training data at all:
 
-## Quick Start
+1. **Generic structural cue, checked first:** a `Page X of Y` footer is the
+   single strongest, domain-independent signal for First/Other/Last role —
+   most real templated documents carry one.
+2. **Per-type title signatures** (`doc_signatures.py`): a small, editable
+   registry of regexes per document type (`FORM 1040`, `WAGE AND TAX
+   STATEMENT`, etc.) — the zero-data equivalent of the article's "First Page
+   Class".
+3. **Unsupervised fallback:** for a document type with no known signature at
+   all (tested in the demo via a `Hazard_Insurance_Notice` page that is
+   deliberately *not* registered), a sharp drop in TF-IDF cosine similarity
+   between consecutive pages is used as a generic "something changed here"
+   boundary cue, the same idea the article used Doc2Vec embeddings for.
 
-### Prerequisites
+`TrainableClassifier` exists for the path where labeled samples do become
+available — it is the article's pipeline (vectorize → Logistic Regression
+over `DocType` / `DocType-last` / `Other` labels), included so the project
+doesn't stop being useful once real training data shows up.
 
-- Python 3.9+
-- Node.js 18+
-- (Optional) Tesseract OCR: `brew install tesseract`
-- (Optional) Gemini API key for LLM verification
+## Why this matters for the brief's efficiency constraint
 
-### Setup & Run
+The whole classify-and-split pass runs on TF-IDF + regex + a state machine —
+no LLM calls, no GPU, no per-page embedding from a large hosted model. On the
+16-page synthetic demo it runs in well under a second; the cost scales
+roughly linearly with page count and stays cheap at 2,000 pages, which is the
+explicit ask in Problem B ("approaches light enough to imagine running close
+to where the documents live").
+
+## Quickstart
 
 ```bash
-# Clone the repository
-git clone <repo-url>
-cd Infrragment
-
-# Option 1: One-command startup
-chmod +x run.sh
-./run.sh
-
-# Option 2: Manual startup
-# Backend
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
 
-# Frontend (new terminal)
-cd frontend
-npm install
-npm run dev
+# 1. Generate a synthetic 16-page test loan package + answer key
+#    (no real mortgage data is used or required anywhere in this project)
+python cli.py demo --out sample_data
+
+# 2. Split it
+python cli.py split sample_data/synthetic_loan_package.pdf -o sample_output
+
+# 3. Score the result against the answer key
+python cli.py evaluate sample_output/manifest.json sample_data/ground_truth.json \
+    --source-pdf sample_data/synthetic_loan_package.pdf
+
+# Or all three in one go:
+python cli.py full-demo --out sample_output
 ```
 
-Then open **http://localhost:5173** and upload a PDF.
-
-### Environment Variables (optional)
+To run it on your own PDF:
 
 ```bash
-export ENABLE_LLM_VERIFICATION=true      # Enable Gemini verification
-export GEMINI_API_KEY=your_key_here       # Your Gemini API key
+python cli.py split /path/to/your_loan_package.pdf -o output_dir
 ```
 
-### Generate a Test PDF
+Output directory contains one PDF per detected document instance, a
+`manifest.json` describing every instance (type, page range, confidence,
+whether it's flagged for manual review), and a `_table.csv` for any
+document whose type is in `table_extractor.TABULAR_DOC_TYPES`.
 
-```bash
-cd backend
-source .venv/bin/activate
-python create_test_pdf.py
-# Creates: test_documents/sample_loan_file.pdf
-```
+## Demo results (synthetic 16-page package, 11 ground-truth documents)
 
-## Tech Stack
-
-| Component | Technology |
-|-----------|-----------|
-| **PDF parsing/rendering** | PyMuPDF (`pymupdf`) |
-| **Table extraction** | pdfplumber (primary), camelot-py (optional) |
-| **OCR** | pytesseract + Tesseract |
-| **CV/layout analysis** | OpenCV, scikit-image (SSIM) |
-| **LLM verification** | Gemini 3.1 Flash Lite via `google-genai` |
-| **Backend** | FastAPI + SQLite/JSON |
-| **Frontend** | React + Vite + Tailwind CSS v4 |
-| **PDF viewing** | PDF.js (pdfjs-dist) |
-
-## Pipeline Stages
-
-### 1. Feature Extraction
-For each page, computes a feature vector:
-- Text-layer features: titles, form identifiers, page numbers, font profiles
-- Visual features: layout similarity (SSIM), whitespace density, letterhead detection
-- OCR fallback for scanned pages
-
-### 2. Boundary Detection
-Weighted heuristic scoring on page transitions:
-- Page number reset to 1 (weight: 0.35)
-- Different form/document identifier (weight: 0.30)
-- "Page X of X" final page indicator (weight: 0.15)
-- Layout dissimilarity via SSIM (weight: 0.12)
-- Font profile change (weight: 0.08)
-- Letterhead/logo detection (weight: 0.08)
-- Title text presence (weight: 0.07)
-- Whitespace density spike (weight: 0.05)
-
-Threshold: score > 0.50 → mark as document boundary.
-
-### 3. Instance Resolution
-- Assigns document type labels from content (generic, not hardcoded)
-- Disambiguates same-type documents using distinguishing attributes (dates, periods, account numbers)
-- Assigns instance ordinals per type
-
-### 4. Table Extraction
-- Primary: pdfplumber (lattice + text modes)
-- Multi-page table detection via header similarity matching
-- Header deduplication for merged tables
-- Structured output: headers + rows as clean arrays
-
-### 5. LLM Verification (Optional)
-- Only verifies ambiguous decisions (confidence 0.35–0.75)
-- ~60-80 API calls for a 2000-page PDF
-- Full token counting and cost logging
-
-## Output Structure
+The synthetic package deliberately includes the two hard cases called out in
+the brief: three back-to-back instances of the same type (`Form_1040`, tax
+years 2019/2020/2021) and a multi-page table (a 3-page bank statement). It
+also includes one document type with no signature registered at all, to
+honestly test the no-training-data fallback rather than only the easy cases.
 
 ```
-/output/<upload_id>/
-  manifest.json                  # Full processing manifest
-  /bank_statement/
-    instance_1/
-      pages_0001_0003.pdf
-      tables.json
-    instance_2/
-      pages_0004_0005.pdf
-      tables.json
-  /form_1040/
-    instance_1/
-      pages_0006_0007.pdf
-      tables.json
-  /uncategorized/
-    instance_1/
-      ...
+page_role_accuracy:                 1.0   (16/16 pages)
+boundary_exact_match_rate:          1.0   (11/11 documents, exact start/end page)
+type_accuracy_on_matched_boundaries: 0.91 (10/11 — the one miss is the
+                                            deliberately-unregistered type,
+                                            correctly bounded, labeled
+                                            "Unclassified", and flagged
+                                            needs_review: true rather than
+                                            silently mismerged)
 ```
 
-## Cost Model at Scale
+This is a clean run because the synthetic data is well-behaved by
+construction. The honest caveat: real scanned mortgage documents will have
+noisier OCR, rotated pages, and templates that vary by state — the
+`HeuristicClassifier`'s regex signatures will need to be extended
+(`doc_signatures.py` is a plain dict, deliberately easy to grow), and the
+`TrainableClassifier` path will matter a lot more once real labeled samples
+are available, the same way the article reports a jump to ~93-94% accuracy
+once Doc2Vec + Logistic Regression is trained on a real labeled corpus.
 
-| Metric | Value |
-|--------|-------|
-| LLM calls per 2000 pages | ~60-80 |
-| Avg tokens per call | ~800 input, ~50 output |
-| Cost per 2000-page PDF | ~$0.02-0.03 |
-| Processing speed | ~2-5 pages/second |
-| Total LLM cost | <0.1% of per-page LLM approach |
+## How boundary detection actually works
 
-## API Endpoints
+`page_classifier.py` labels every page `FIRST` / `OTHER` / `LAST` plus a
+document type guess. `boundary_detector.py` then walks that list and tracks
+one "currently open document." The key rules (see the module docstring for
+the full reasoning):
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/upload` | Upload PDF, start processing |
-| `GET` | `/api/status/{id}` | SSE stream of processing stages |
-| `GET` | `/api/documents/{id}` | List all document instances |
-| `GET` | `/api/documents/{id}/{doc_id}` | Document instance detail |
-| `GET` | `/api/documents/{id}/{doc_id}/pdf` | Serve split PDF |
-| `GET` | `/api/tables/{id}/{doc_id}` | Tables for a document |
-| `GET` | `/api/efficiency/{id}` | Cost/performance stats |
-| `GET` | `/api/uploads` | List processed uploads |
+- A `FIRST` page always closes whatever was previously open and starts a new
+  document — this is what correctly splits three back-to-back Form_1040
+  instances into three ranges instead of merging them into one six-page block.
+- A `LAST` page closes the open document if the type matches; a type mismatch
+  or an orphan `LAST` with nothing open is still resolved into a range, but
+  flagged (`closing_reason`) so a human reviewer can see exactly where the
+  page-level model was unsure, instead of it being silently merged away.
+- Anything still open at the end of the file is closed at the last page —
+  this is what correctly handles single-page document classes, which (per
+  the article) never get a dedicated "last page" class in the first place.
 
-## Dependencies
+## Project structure
 
-### Python (backend/requirements.txt)
-- fastapi, uvicorn, python-multipart, pydantic
-- pymupdf, pdfplumber
-- pytesseract, Pillow
-- opencv-python-headless, numpy, scikit-image
-- google-genai
-- python-slugify
+```
+cli.py                  entry point (demo / split / evaluate / full-demo)
+requirements.txt
+src/
+  pdf_extract.py         per-page text extraction + OCR fallback
+  text_clean.py          lowercase / strip noise / stopwords (article's "Data cleaning" step)
+  vectorizer.py           TF-IDF page vectorizer (Doc2Vec stand-in) + similarity helper
+  doc_signatures.py       editable registry of document-type regex signatures
+  page_classifier.py      HeuristicClassifier (default) + TrainableClassifier
+  boundary_detector.py    FIRST/OTHER/LAST -> page-range state machine
+  pdf_splitter.py         writes per-document PDFs + manifest.json
+  table_extractor.py      multi-page table stitching (secondary feature)
+  pipeline.py             orchestrates the full split
+  synth_data.py           synthetic test PDF + ground truth generator
+  evaluate.py             scores a manifest against ground truth
+sample_data/, sample_output/   generated by `python cli.py full-demo`
+```
 
-### Node.js (frontend/package.json)
-- react, react-dom
-- vite, @vitejs/plugin-react
-- tailwindcss, @tailwindcss/vite
-- pdfjs-dist
+## Honest limitations / what's next
 
-## License
-
-MIT
+- **OCR fallback is wired in but untuned** for real scan noise (skew,
+  low-contrast, multi-column layouts) — it works (verified against a
+  synthetic image-only page in testing), but a production version would want
+  deskew/denoise preprocessing before Tesseract, or a dedicated OCR engine.
+- **`doc_signatures.py` only knows the document types listed in it.** That's
+  by design (it's the zero-training-data path), but it means recall on an
+  unfamiliar document type depends entirely on the similarity-fallback path,
+  which is weaker than a trained classifier — exactly why `TrainableClassifier`
+  exists as the upgrade path once labeled samples are available.
+- **Table stitching is intentionally simple** (exact header-row match across
+  pages). Real bank statements sometimes reformat or omit the header on
+  continuation pages; a more robust version would do fuzzy column alignment.
+- **Mismatched/orphan boundary cases are surfaced, not resolved.** The
+  `needs_review` flag in the manifest is the intended hook for a human-in-the-
+  loop step, matching the confidence-threshold philosophy the article uses:
+  let the model handle the confident majority, route the rest to a reviewer.
