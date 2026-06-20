@@ -116,34 +116,6 @@ and a logical folder category for the dashboard view. It's entirely
 optional — with no key set, the pipeline falls back to the raw detected
 type names with no loss of functionality.
 
-## Demo results (synthetic 16-page package, 11 ground-truth documents)
-
-The synthetic package deliberately includes the two hard cases this project
-targets: three back-to-back instances of the same document type
-(distinguished only by a date field on each page) and a multi-page table
-spanning several pages. It also includes one document type with no
-signature registered at all, to honestly test the no-training-data fallback
-rather than only the easy cases.
-
-```
-page_role_accuracy:                 1.0   (16/16 pages)
-boundary_exact_match_rate:          1.0   (11/11 documents, exact start/end page)
-type_accuracy_on_matched_boundaries: 0.91 (10/11 — the one miss is the
-                                            deliberately-unregistered type,
-                                            correctly bounded, labeled
-                                            "Unclassified", and flagged
-                                            needs_review: true rather than
-                                            silently mismerged)
-```
-
-This is a clean run because the synthetic data is well-behaved by
-construction. The honest caveat: real-world scanned documents will have
-noisier OCR, rotated pages, and templates that vary by source — the
-`HeuristicClassifier`'s regex signatures will need to be extended
-(`doc_signatures.py` is a plain dict, deliberately easy to grow), and the
-`TrainableClassifier` path will matter a lot more once real labeled samples
-are available, the same way the article reports a jump to ~93–94% accuracy
-once Doc2Vec + Logistic Regression is trained on a real labeled corpus.
 
 ## How boundary detection actually works
 
