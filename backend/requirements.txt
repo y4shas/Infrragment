@@ -5,24 +5,21 @@ python-multipart==0.0.20
 pydantic==2.11.3
 
 # PDF processing
-pymupdf==1.27.0
-pdfplumber==0.11.10
-
-# Table extraction (optional - requires ghostscript)
-# camelot-py==2.0.0
+pymupdf>=1.25.0
+pdfplumber>=0.11.0
 
 # OCR
-pytesseract==0.3.13
-Pillow==11.2.1
+pytesseract>=0.3.10
+Pillow>=11.0.0
 
 # Computer Vision
-opencv-python-headless==4.11.0.86
-numpy==2.2.6
-scikit-image==0.25.2
+opencv-python-headless>=4.10.0
+numpy>=2.0.0
+scikit-image>=0.24.0
 
 # Gemini LLM verification
-google-genai==1.20.0
+google-genai>=1.10.0
 
 # Utilities
-aiofiles==24.1.0
-python-slugify==8.0.4
+aiofiles>=24.1.0
+python-slugify>=8.0.0
