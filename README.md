@@ -1,4 +1,4 @@
-# Loan-Package Logical Pagination Splitter
+# Logical Pagination Splitter
 
 A working prototype for **InfrX 2026 — Problem B: Structuring the 2,000-Page File: Tables & Logical Pagination**.
 
