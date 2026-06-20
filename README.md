@@ -4,7 +4,7 @@
 
 Infrragment takes a single large, unstructured, multi-document PDF (e.g., a 100–2000 page mortgage loan file) and produces:
 
-1. **Logical pagination** — splits the PDF into individual document instances with precise page boundaries
+1. **Logical pagination** — splits the PDF into individual document instances with precise page boundaries 
 2. **Table structuring** — extracts tables (including multi-page tables) into clean, structured row/column data
 3. **Dashboard UI** — upload, browse, and inspect results
 
